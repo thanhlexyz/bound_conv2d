@@ -16,12 +16,13 @@ class Conv2dWedge:
         return f'Conv2dWedge(shape={self.shape})'
 
     def accumulate_weight(self, weight, bias, *, attr=None):
-        raise NotImplementedError
+        # TODO
         return type(self)(new_W_L, new_b_L, new_W_U, new_b_U)
 
     def to_bound_tensor(self, x):
         # x: BoundTensor, input bound tensor
         # return output bound tensor
+        # TODO, not done yet
         x = x[0]
         x_L, x_U = x.concretize()
         x_mean = 0.5 * (x_U - x_L)
