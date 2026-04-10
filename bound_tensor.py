@@ -49,3 +49,6 @@ class BoundTensor(torch.Tensor):
 
     def concretize(self, *x):
         return self.perturbation.concretize(*x)
+
+    def sample(self):
+        return self.perturbation.sample()
