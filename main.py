@@ -29,12 +29,15 @@ def conv2d(x, weight, bias=None, stride=1, padding=1, dilation=1):
         for c_out in range(C_out):
             for h_out in range(H_out):
                 for w_out in range(W_out):
+                    # initialize accumulation
                     acc = torch.zeros((), dtype=x.dtype, device=x.device)
                     for c_in in range(C_in):
                         for kh in range(Kh):
                             for kw in range(Kw):
+                                # compute index of input
                                 ih = h_out * Sh + kh * Dh
                                 iw = w_out * Sw + kw * Dw
+                                # accumulate by sum
                                 acc += x_pad[b, c_in, ih, iw] * weight[c_out, c_in, kh, kw]
                     if bias is not None:
                         acc = acc + bias[c_out]
