@@ -1,50 +1,63 @@
 import torch.nn.functional as F
 import torch
+from functools import partial
+
+
+def _in_output_box(y, L_y, U_y):
+    return bool(((y >= L_y) & (y <= U_y)).all().item())
 
 
 if __name__ == '__main__':
-    # import
     from conv2d_wedge import Conv2dWedge
     from bound_tensor import BoundTensor
     from bound_linf import BoundLinf
 
-    # initialize x as bound tensor
-    L = torch.randn(128, 3, 10, 10)
-    U = L + 0.02
-    p = BoundLinf(L, U)
-    x = BoundTensor(L, p)
+    L_x = torch.randn(128, 3, 10, 10)
+    U_x = L_x + 0.02
+    p_x = BoundLinf(L_x, U_x)
+    x = BoundTensor(L_x, p_x)
 
-    # initialize weight and bias for conv2d
     weight = torch.randn(2, 3, 5, 5)
     bias = torch.randn(2)
 
-    # forward
-    x0 = x.sample()
-    y0 = F.conv2d(x0, weight, bias=bias, stride=1, padding=1, dilation=1, groups=1)
-    # print(y0.shape)
+    F_conv = partial(F.conv2d, stride=1, padding=1, dilation=1, groups=1)
 
-    # identity conv: F.conv2d(y0, W_L, b_L) == y0 (same shape, stride=1, padding=0)
-    C = y0.shape[1]
-    W_L = torch.zeros(C, C, 1, 1, dtype=y0.dtype, device=y0.device)
-    W_L[torch.arange(C, device=y0.device), torch.arange(C, device=y0.device), 0, 0] = 1.0
-    b_L = torch.zeros(C, dtype=y0.dtype, device=y0.device)
-    W_U = W_L.clone()
-    b_U = b_L.clone()
-    wedge = Conv2dWedge(W_L, b_L, W_U, b_U)
-    # print(wedge)
+    c_out = weight.shape[0]
+    W_I = torch.zeros(c_out, c_out, 1, 1, dtype=weight.dtype, device=weight.device)
+    W_I[torch.arange(c_out, device=weight.device), torch.arange(c_out, device=weight.device), 0, 0] = 1.0
+    b0 = torch.zeros(c_out, dtype=weight.dtype, device=weight.device)
+    wedge_out = Conv2dWedge(W_I, b0.clone(), W_I.clone(), b0.clone())
+    y_wedge = wedge_out.accumulate_weight(weight, bias)
 
-    # test if input for wedge is actually identity
-    y1 = F.conv2d(y0, W_L, bias=b_L, stride=1, padding=0)
-    same = torch.allclose(y1, y0)
-    err = (y1 - y0).abs().max().item()
-    # print(f'[y1 vs y0] {same=} {err=}')
+    # y: BoundTensor whose perturbation is the propagated L∞ box on y
+    y = y_wedge.to_bound_tensor(F_conv, x)
+    L_y, U_y = y.concretize()
+    p_y = y.perturbation
 
-    # initialize y as bound tensor
-    L = torch.randn_like(y0)
-    U = L + 0.02
-    p = BoundLinf(L, U)
-    y = BoundTensor(L, p)
-    print(y)
+    y_ref = x.conv(F_conv, x, weight, bias)
+    L_ref, U_ref = y_ref.concretize()
+    print(
+        "y (wedge) matches interval conv:",
+        torch.allclose(L_y, L_ref) and torch.allclose(U_y, U_ref),
+        (L_y - L_ref).abs().max().item(),
+        (U_y - U_ref).abs().max().item(),
+    )
+    print(f"y BoundTensor perturbation: {p_y}")
 
-    # realize bound tensor for y using identity conv2d wedge
-    # identical_y = wedge.to_bound_tensor(F_conv, y)
+    n = 100
+    inside_hits = 0
+    for _ in range(n):
+        x_s = torch.rand_like(L_x) * (U_x - L_x) + L_x
+        y_s = F_conv(x_s, weight, bias=bias)
+        if _in_output_box(y_s, L_y, U_y):
+            inside_hits += 1
+    print(f"samples inside x box → output in y box (from y BoundTensor): {inside_hits}/{n}")
+
+    outside_hits = 0
+    for _ in range(n):
+        margin = 0.05 + torch.rand(1).item() * 0.2
+        x_s = U_x + margin * torch.rand_like(U_x)
+        y_s = F_conv(x_s, weight, bias=bias)
+        if not _in_output_box(y_s, L_y, U_y):
+            outside_hits += 1
+    print(f"samples outside x box → output NOT in y box (from y BoundTensor): {outside_hits}/{n}")
