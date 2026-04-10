@@ -27,10 +27,10 @@ if __name__ == '__main__':
     W_L[torch.arange(C, device=y0.device), torch.arange(C, device=y0.device), 0, 0] = 1.0
     b_L = torch.zeros(C, dtype=y0.dtype, device=y0.device)
 
-    y_id = F.conv2d(y0, W_L, bias=b_L, stride=1, padding=0)
-    same = torch.allclose(y_id, y0)
-    max_err = (y_id - y0).abs().max().item()
-    print("identity conv matches y0:", same, "max_abs_err:", max_err)
+    y1 = F.conv2d(y0, W_L, bias=b_L, stride=1, padding=0)
+    same = torch.allclose(y1, y0)
+    err = (y1 - y0).abs().max().item()
+    print(f'[y1 vs y0] {same=} {err=}')
 
 #
 #     print(y.shape)
