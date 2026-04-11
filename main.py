@@ -4,8 +4,6 @@ from functools import partial
 
 import tool
 
-def _in_output_box(y, L_y, U_y):
-    return bool(((y >= L_y) & (y <= U_y)).all().item())
 
 if __name__ == '__main__':
     # args
@@ -53,7 +51,7 @@ if __name__ == '__main__':
     print(f'{correct=} {n_sample=}')
 
     # try to forward sample not in x
-    def neg_sample(p, eps=2e-2):
+    def neg_sample(p, eps=1e-4):
         noise = torch.rand_like(p.L) * eps
         samples = [
             p.L - noise,
