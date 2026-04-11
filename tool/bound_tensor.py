@@ -52,3 +52,6 @@ class BoundTensor(torch.Tensor):
 
     def sample(self):
         return self.perturbation.sample()
+
+    def contain(self, x):
+        return self.perturbation.contain(x)

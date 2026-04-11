@@ -72,3 +72,12 @@ class BoundLinf:
     @property
     def shape(self):
         return self.L.shape
+
+    def contain(self, x):
+        if x.shape != self.shape:
+            return False
+        if (x < self.L).any():
+            return False
+        if (x > self.U).any():
+            return False
+        return True
