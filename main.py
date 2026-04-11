@@ -51,7 +51,7 @@ if __name__ == '__main__':
     print(f'{correct=} {n_sample=}')
 
     # try to forward sample not in x
-    def neg_sample(p, eps=1e-4):
+    def neg_sample(p, eps=1e-1):
         noise = torch.rand_like(p.L) * eps
         samples = [
             p.L - noise,
