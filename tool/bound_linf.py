@@ -19,6 +19,9 @@ class BoundLinf:
     def sample(self):
         return torch.rand_like(self.L) * (self.U - self.L) + self.L
 
+    def sample_edge_case(self, eps=1e-6):
+        return torch.rand_like(self.L) * (self.U - self.L) + self.L
+
     def flatten(self, dim):
         self.L = torch.flatten(self.L, dim)
         self.U = torch.flatten(self.U, dim)

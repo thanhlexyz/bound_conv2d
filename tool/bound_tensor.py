@@ -53,5 +53,8 @@ class BoundTensor(torch.Tensor):
     def sample(self):
         return self.perturbation.sample()
 
+    def sample_edge_case(self, eps=1e-6):
+        return self.perturbation.sample_edge_case(eps=eps)
+
     def contain(self, x):
         return self.perturbation.contain(x)

@@ -1,41 +1,59 @@
 import torch.nn.functional as F
 import torch
 
-def _compose_conv_kernels(w_second, w_first):
-    """
-    Kernel W with conv(x, W, pad=p0+p1) equals conv(conv(x, w_first, pad=p0), w_second, pad=p1)
-    in the interior (stride=1, dilation=1, groups=1). Same order as linear Wedge:
-    new_W = W_L @ weight  =>  z = W_L ( conv(x, weight) + bias ) + b_L.
+def compose_weight(W_bound, weight):
+    """Compose conv kernels (stride 1, dilation 1, groups 1, square kernels).
 
-    Spatial slice for each (i, j, l) is
-    ``conv2d(w_first[l,j], flip(w_second[i,l]), padding=k2-1)``, which equals
-    ``conv_transpose2d(w_first[l,j], w_second[i,l], padding=0)`` (same structural
-    role as auto_LiRPA ``BoundConv.bound_backward``, which backprops through conv
-    via ``F.conv_transpose2d``). We sum over mid-channels ``l`` and, for each ``j``,
-    apply one ``conv_transpose2d`` with weight shape ``[1, c2, k2, k2]`` to batch
-    all output channels ``i``.
+    With ``h = conv2d(x, weight)`` and ``y = conv2d(h, W_bound)`` (wedge / interior
+    semantics), returns the composed kernel ``W_composed`` with
+    ``conv2d(x, W_composed)`` equivalent in the interior.
+
+    Args:
+        W_bound: in shape ``(C_out_bound, C_in_bound, Kh_bound, Kw_bound)``;
+            square kernels: ``Kh_bound == Kw_bound``.
+        weight: in shape ``(C_out, C_in, Kh, Kw)``; square kernels ``Kh == Kw``;
+            and ``C_in_bound == C_out`` (middle channels match).
+
+    Returns:
+        out shape ``(C_out_bound, C_in, kh, kw)`` with
+        ``kh = Kh + Kh_bound - 1``, ``kw = Kw + Kw_bound - 1``.
     """
-    c2, c1, k2, kw2 = w_second.shape
-    c1a, c0, k1, kw1 = w_first.shape
-    if c1 != c1a or k2 != kw2 or k1 != kw1:
-        raise ValueError("incompatible conv weights for composition")
-    kh, kw = k1 + k2 - 1, k1 + k2 - 1
-    out = torch.zeros(c2, c0, kh, kw, dtype=w_first.dtype, device=w_first.device)
-    for l in range(c1):
-        # w_second[:, l] -> weight [1, c2, k2, k2] for conv_transpose2d (1 -> c2).
-        w_tl = w_second[:, l, :, :].unsqueeze(0)
-        for j in range(c0):
-            inp = w_first[l, j].view(1, 1, k1, k1)
+    C_out_bound, C_in_bound, Kh_bound, Kw_bound = W_bound.shape
+    C_out, C_in, Kh, Kw = weight.shape
+    if C_in_bound != C_out or Kh_bound != Kw_bound or Kh != Kw:
+        raise ValueError('incompatible conv weights for composition')
+    kh, kw = Kh + Kh_bound - 1, Kw + Kw_bound - 1
+    out = torch.zeros(C_out_bound, C_in, kh, kw, dtype=weight.dtype, device=weight.device)
+    for i in range(C_in_bound):
+        # ``(1, C_out_bound, Kh_bound, Kw_bound)``: wedge maps one mid-channel plane to all bound outputs.
+        kernel_wedge_in_i = W_bound[:, i, :, :].unsqueeze(0)
+        for j in range(C_in):
+            # ``(1, 1, Kh, Kw)``: first conv maps input channel j into mid channel l.
+            kernel_layer_in_j_to_in_i = weight[i, j].view(1, 1, Kh, Kh)
             out[:, j, :, :] += F.conv_transpose2d(
-                inp, w_tl, bias=None, stride=1, padding=0, output_padding=0, groups=1
+                kernel_layer_in_j_to_in_i,
+                kernel_wedge_in_i,
+                bias=None,
+                stride=1,
+                padding=0,
+                output_padding=0,
+                groups=1,
             ).squeeze(0)
     return out
 
+def compose_bias(W_bound, bias):
+    """Back-project a per-channel bias through ``W_bound`` (spatially constant bias map).
 
-def _conv_backproject_bias(W_wedge, bias):
-    """conv(spatial-constant bias map, W_wedge) reduces to einsum over input channels and kernel."""
-    return torch.einsum("coij, o -> c", W_wedge, bias)
+    Args:
+        W_bound: shape ``(C_out_bound, C_mid, Kh_bound, Kw_bound)`` — same layout
+            as in :func:`compose_weight` (``c`` = wedge output channels, ``o`` = middle /
+            conv output channels summed in the einsum).
+        bias: shape ``(C_mid,)``, one bias per channel after ``conv2d(..., weight)``.
 
+    Returns:
+        shape ``(C_out_bound,)`` — contribution to the composed bias on wedge outputs.
+    """
+    return torch.einsum('coij, o -> c', W_bound, bias)
 
 class Conv2dWedge:
 
@@ -53,22 +71,18 @@ class Conv2dWedge:
 
     @property
     def shape(self):
+        # (channel_start_node, channel_end_node, kernel_height, kerner_width)
         return self.W_L.shape
 
     def accumulate_weight(self, weight, bias, *, attr=None):
-        # attr: reserved (e.g. stride/padding metadata); composition assumes stride=dilation=1, groups=1.
-        # Composed kernels are built in _compose_conv_kernels via F.conv_transpose2d (LiRPA-style).
-        _ = attr
-        if self.W_L.shape[1] != weight.shape[0] or self.W_U.shape[1] != weight.shape[0]:
-            raise ValueError(
-                "weight must have shape [C_mid, C_in, ...] matching wedge input channels C_mid"
-            )
-        if bias.shape[0] != weight.shape[0]:
-            raise ValueError("bias length must match weight.shape[0]")
-        new_W_L = _compose_conv_kernels(self.W_L, weight)
-        new_W_U = _compose_conv_kernels(self.W_U, weight)
-        new_b_L = self.b_L + _conv_backproject_bias(self.W_L, bias)
-        new_b_U = self.b_U + _conv_backproject_bias(self.W_U, bias)
+        # check shape
+        assert self.shape[1] == weight.shape[0]
+        assert self.shape[0] == bias.shape[0]
+        # compose weight and bias
+        new_W_L = compose_weight(self.W_L, weight)
+        new_W_U = compose_weight(self.W_U, weight)
+        new_b_L = self.b_L + compose_bias(self.W_L, bias)
+        new_b_U = self.b_U + compose_bias(self.W_U, bias)
         return type(self)(new_W_L, new_b_L, new_W_U, new_b_U)
 
     def to_bound_tensor(self, F_conv, x):
