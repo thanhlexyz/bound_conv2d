@@ -52,7 +52,7 @@ if __name__ == '__main__':
             correct += 1
     print(f'[@sample] {correct=} {n_sample=}')
 
-    # try to forward sample of x
+    # try to forward edge sample of x
     correct = 0
     for i in range(n_sample):
         x0 = x.sample_edge_case(eps=1e-6)
