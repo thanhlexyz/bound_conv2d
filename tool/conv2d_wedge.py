@@ -91,5 +91,26 @@ class Conv2dWedge(Wedge):
             new_b_U = torch.einsum('bsehw,be->bs', self.W_U, bias_b)
         return type(self)(new_W_L, new_b_L, new_W_U, new_b_U, attr=new_attr)
 
+    def to_bound_tensor(self, x):
+        if isinstance(x, (tuple, list)):
+            x = x[0]
+        mean = x.bound.x0
+        std = x.bound.eps
+        B, _, E, _, _ = self.shape
+        def concretize_one_side(weight, bias, sign):
+            # W: (B, S, E, kH, kW); per batch slice, ``W[b]`` is the conv2d weight.
+            parts = []
+            for i in range(B):
+                center = F.conv2d(mean[i], weight[i], bias[i], **self.attr)
+                diff = F.conv2d(std[i], weight[i].abs(), None, **self.attr)
+                parts.append(center + sign * diff)
+            return torch.stack(parts, dim=0)
+        L = concretize_one_side(self.W_L, self.b_L, -1)
+        U = concretize_one_side(self.W_U, self.b_U, 1)
+        x0 = 0.5 * (L + U)
+        eps = 0.5 * (U - L)
+        bound = type(x.bound)(x0, eps)
+        return type(x)(x0, bound)
+
     def accumulate_relaxed_relu(self, pre_value, enable_alpha=False):
         raise NotImplementedError
