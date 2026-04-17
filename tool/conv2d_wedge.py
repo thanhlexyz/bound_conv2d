@@ -49,16 +49,20 @@ class Conv2dWedge:
         # compose weight
         W_L = torch.zeros(B, S, I, H1, W1)
         W_U = torch.zeros(B, S, I, H1, W1)
+        # Per-batch conv2d(X, W[b]) with X = weight^T (I,O,H1,W1), W[b] (S,O,H,W).
+        # Not replaceable by conv_transpose2d with the same stride/padding/dilation: transpose
+        # conv is the adjoint (gradient) w.r.t. X, not this forward map; shapes/values differ.
+        X = weight.transpose(0, 1)
         for b in range(B):
-            W_U[b] = self.F_conv(weight.transpose(0, 1), self.W_L[b], None).transpose(0, 1)
-            W_L[b] = self.F_conv(weight.transpose(0, 1), self.W_U[b], None).transpose(0, 1)
+            W_U[b] = self.F_conv(X, self.W_L[b], None).transpose(0, 1)
+            W_L[b] = self.F_conv(X, self.W_U[b], None).transpose(0, 1)
         # compose bias
         b_L = self.b_L
         b_U = self.b_L
         if bias is not None:
             bias = bias[None].repeat(B, 1)
-            b_L = torch.einsum('bsehw,be->bs', self.W_L, bias)
-            b_U = torch.einsum('bsehw,be->bs', self.W_U, bias)
+            b_L += torch.einsum('bsehw,be->bs', self.W_L, bias)
+            b_U += torch.einsum('bsehw,be->bs', self.W_U, bias)
         return type(self)(W_L, b_L, W_U, b_U, attr=self.attr)
 
     def to_bound_tensor(self, x):
