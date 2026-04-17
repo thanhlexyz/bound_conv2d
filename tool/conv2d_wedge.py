@@ -78,6 +78,7 @@ class Conv2dWedge(Wedge):
         dtype, device = self.W_L.dtype, self.W_L.device
         new_W_L = torch.zeros(B, S, I, H, W, dtype=dtype, device=device)
         new_W_U = torch.zeros(B, S, I, H, W, dtype=dtype, device=device)
+        # TODO: vectorize this for loop on batch size
         for b in range(B):
             # this fuse_attr is for conv2d to combine weight of two conv2d
             new_W_U[b] = F.conv2d(X, self.W_L[b], bias=None, **fuse_attr).transpose(0, 1)
@@ -89,9 +90,6 @@ class Conv2dWedge(Wedge):
             new_b_L = torch.einsum('bsehw,be->bs', self.W_L, bias_b)
             new_b_U = torch.einsum('bsehw,be->bs', self.W_U, bias_b)
         return type(self)(new_W_L, new_b_L, new_W_U, new_b_U, attr=new_attr)
-
-    def to_bound_tensor(self, x):
-        raise NotImplementedError
 
     def accumulate_relaxed_relu(self, pre_value, enable_alpha=False):
         raise NotImplementedError
