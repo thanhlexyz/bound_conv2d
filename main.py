@@ -30,5 +30,5 @@ if __name__ == '__main__':
     print(f'{wedge_out=}')
 
     # accumulate weight of wedge to map in -> out
-    wedge_in = wedge_out.accumulate_weight(weight, bias, attr)
+    wedge_in = wedge_out.accumulate_layer(weight, bias, attr)
     print(f'{wedge_in=}')
