@@ -17,24 +17,24 @@ if __name__ == '__main__':
     x = tool.BoundTensor(L, p)
 
     # create net
-    weight           = torch.randn(2, 4, 3, 3)
-    bias             = torch.randn(2)
-    F_conv           = partial(F.conv2d, stride=2, padding=2, dilation=2, groups=1)
-    F_conv_transpose = partial(F.conv_transpose2d, stride=1, padding=1, dilation=1, groups=1)
+    weight = torch.randn(2, 4, 3, 3)
+    bias = torch.randn(2)
+    conv_attr = dict(stride=2, padding=2, dilation=2, groups=1)
+    F_conv = partial(F.conv2d, **conv_attr)
 
     # sample
     y0 = F_conv(x.sample(), weight, bias)
 
-    # create identity wedge for output
+    # identity wedge uses default conv attr (stride=1, padding='same'); pass attr=... to match a specific op
     wedge_out = tool.Conv2dWedge.init_identity(y0)
     print(f'{wedge_out=}')
 
-#     # accumulate to compute wedge_in
-#     wedge_in = wedge_out.accumulate_weight(weight, bias)
-#     print(f'{wedge_in=}')
-#
+    # accumulate to compute wedge_in
+    wedge_in = wedge_out.accumulate_weight(weight, bias)
+    print(f'{wedge_in=}')
+
 #     # compute output BoundTensor
-#     y = wedge_in.to_bound_tensor(F_conv, x)
+#     y = wedge_in.to_bound_tensor(x)
 #
 #     print(f'{x=}')
 #     print(f'{y=}')
