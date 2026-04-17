@@ -1,67 +1,15 @@
 import torch.nn.functional as F
 import torch
 
-def compose_weight(W_bound, weight):
-    """Compose conv kernels (stride 1, dilation 1, groups 1, square kernels).
-
-    With ``h = conv2d(x, weight)`` and ``y = conv2d(h, W_bound)`` (wedge / interior
-    semantics), returns the composed kernel ``W_composed`` with
-    ``conv2d(x, W_composed)`` equivalent in the interior.
-
-    Args:
-        W_bound: in shape ``(C_out_bound, C_in_bound, Kh_bound, Kw_bound)``;
-            square kernels: ``Kh_bound == Kw_bound``.
-        weight: in shape ``(C_out, C_in, Kh, Kw)``; square kernels ``Kh == Kw``;
-            and ``C_in_bound == C_out`` (middle channels match).
-
-    Returns:
-        out shape ``(C_out_bound, C_in, kh, kw)`` with
-        ``kh = Kh + Kh_bound - 1``, ``kw = Kw + Kw_bound - 1``.
-    """
-    C_out_bound, C_in_bound, Kh_bound, Kw_bound = W_bound.shape
-    C_out, C_in, Kh, Kw = weight.shape
-    if C_in_bound != C_out or Kh_bound != Kw_bound or Kh != Kw:
-        raise ValueError('incompatible conv weights for composition')
-    kh, kw = Kh + Kh_bound - 1, Kw + Kw_bound - 1
-    out = torch.zeros(C_out_bound, C_in, kh, kw, dtype=weight.dtype, device=weight.device)
-    for i in range(C_in_bound):
-        # ``(1, C_out_bound, Kh_bound, Kw_bound)``: wedge maps one mid-channel plane to all bound outputs.
-        kernel_wedge_in_i = W_bound[:, i, :, :].unsqueeze(0)
-        for j in range(C_in):
-            # ``(1, 1, Kh, Kw)``: first conv maps input channel j into mid channel l.
-            kernel_layer_in_j_to_in_i = weight[i, j].view(1, 1, Kh, Kh)
-            out[:, j, :, :] += F.conv_transpose2d(
-                kernel_layer_in_j_to_in_i,
-                kernel_wedge_in_i,
-                bias=None,
-                stride=1,
-                padding=0,
-                output_padding=0,
-                groups=1,
-            ).squeeze(0)
-    return out
-
-def compose_bias(W_bound, bias):
-    """Back-project a per-channel bias through ``W_bound`` (spatially constant bias map).
-
-    Args:
-        W_bound: shape ``(C_out_bound, C_mid, Kh_bound, Kw_bound)`` — same layout
-            as in :func:`compose_weight` (``c`` = wedge output channels, ``o`` = middle /
-            conv output channels summed in the einsum).
-        bias: shape ``(C_mid,)``, one bias per channel after ``conv2d(..., weight)``.
-
-    Returns:
-        shape ``(C_out_bound,)`` — contribution to the composed bias on wedge outputs.
-    """
-    return torch.einsum('coij, o -> c', W_bound, bias)
-
 class Conv2dWedge:
 
-    def __init__(self, W_L, b_L, W_U, b_U):
-        self.W_L = W_L
-        self.W_U = W_U
-        self.b_L = b_L
-        self.b_U = b_U
+    def __init__(self, W_L, b_L, W_U, b_U, F_conv=None, attr=None):
+        self.W_L    = W_L
+        self.W_U    = W_U
+        self.b_L    = b_L
+        self.b_U    = b_U
+        self.F_conv = F_conv
+        self.attr   = attr
 
     def __repr__(self):
         return str(self)
@@ -79,11 +27,17 @@ class Conv2dWedge:
         assert self.shape[1] == weight.shape[0]
         assert self.shape[0] == bias.shape[0]
         # compose weight and bias
-        new_W_L = compose_weight(self.W_L, weight)
-        new_W_U = compose_weight(self.W_U, weight)
-        new_b_L = self.b_L + compose_bias(self.W_L, bias)
-        new_b_U = self.b_U + compose_bias(self.W_U, bias)
-        return type(self)(new_W_L, new_b_L, new_W_U, new_b_U)
+        W_L = self.F_conv(weight, self.W_L, None)
+        W_U = self.F_conv(weight, self.W_U, None)
+        b_L = self.b_L
+        b_U = self.b_L
+        if bias is not None:
+            # (batch size, in channel, out channel, kernel height, kernel width)
+            # x (batch size, out channel)
+            # -> (batch_size, in channel)
+            b_L = torch.einsum('biohw,bo->bi', self.W_L, bias)
+            b_U = torch.einsum('biohw,bo->bi', self.W_U, bias)
+        return type(self)(W_L, b_L, W_U, b_U)
 
     def to_bound_tensor(self, F_conv, x):
         # x: BoundTensor
@@ -102,3 +56,18 @@ class Conv2dWedge:
         U = concretize_one_side(self.W_U, self.b_U, 1)
         p = type(x.perturbation)(L, U)
         return type(x)(L, p)
+
+    @staticmethod
+    def init_identity(pre_value):
+        '''
+        Initialize an identity Conv2dWedge that map ``pre_value`` with shape ``(B, C, H, W)`` to itself
+        '''
+        # extract dimension of predecessors
+        bs, c, h, w = pre_value.shape
+        dtype = pre_value.dtype
+        device = pre_value.device
+        # create identity wedge for output
+        W_I = torch.eye(c).unsqueeze(0).unsqueeze(-1).unsqueeze(-1).repeat(bs, 1, 1, 1, 1)
+        b_I = torch.zeros(bs, c, dtype=dtype, device=device)
+        F_conv = lambda x, w, b: F.conv2d(x, w, b, stride=1, dilation=1, padding='same')
+        return Conv2dWedge(W_I.clone(), b_I.clone(), W_I.clone(), b_I.clone(), F_conv=F_conv, attr=None)
