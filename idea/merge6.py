@@ -4,6 +4,7 @@ import torch
 
 # setup
 # 2, 3, 3, 3 -> 3, 5, 2, 5
+# stride 2, 3 -> stride 3, 4
 kernel_size_1 = np.array([3, 3])
 kernel_size_2 = np.array([3, 5])
 stride1 = np.array([2, 3])
