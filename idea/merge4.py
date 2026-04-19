@@ -27,3 +27,4 @@ print(y)
 print(y_hat)
 
 assert torch.allclose(y, y_hat)
+print('passed')
