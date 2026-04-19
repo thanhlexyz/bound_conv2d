@@ -11,8 +11,8 @@ kernel_size_1 = np.array([3, 3])
 kernel_size_2 = np.array([3, 5])
 stride1 = np.array([2, 3])
 stride2 = np.array([3, 4])
-padding1 = np.array([2, 3])
-padding2 = np.array([1, 2])
+padding1 = np.array([1, 1])
+padding2 = np.array([2, 2])
 dilation1 = np.array([2, 3])
 dilation2 = np.array([3, 4])
 weight1 = torch.randn(3, 2, 3, 3)
@@ -38,8 +38,8 @@ weight12 = F.conv2d(dilated_weight1.permute(1, 0, 2, 3),
                     weight2.flip(-1, -2),
                     padding=padding,
                     dilation=dilation).permute(1, 0, 2, 3)
-kernel_size_12 = np.array([weight12.shape[3], weight12.shape[4]])
-padding12 = ...
+kernel_size_12 = np.array([weight12.shape[2], weight12.shape[3]])
+padding12 = padding1 + padding2 * stride1
 _ = torch.ones(1, 3, *kernel_size_2) * bias1[None, :, None, None]
 bias12 = F.conv2d(_, weight2, bias2).flatten()
 
